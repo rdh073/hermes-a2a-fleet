@@ -227,6 +227,7 @@ class Outcome:
     kind: str = "ok"        # ok | error | failed
     task_id: str = ""
     state: str = ""         # raw A2A task state (submitted/working/completed/...)
+    final: bool = True      # the task reached a conclusive state (no polling left)
 
 
 def interpret_result(client, resp: Any) -> Outcome:
@@ -252,6 +253,9 @@ def interpret_result(client, resp: Any) -> Outcome:
         detail = f": {reply}" if reply else ""
         return Outcome(
             False, reply=reply, context_id=ctx, error=f"task {state}{detail}",
-            kind="failed", task_id=task_id, state=state,
+            kind="failed", task_id=task_id, state=state, final=True,
         )
-    return Outcome(True, reply=reply, context_id=ctx, kind="ok", task_id=task_id, state=state)
+    # ok call, but a 'submitted'/'working' (or interactive 'input-required') task
+    # is NOT done — only a bare Message ('') or a 'completed' task is conclusive.
+    final = state in ("", "completed")
+    return Outcome(True, reply=reply, context_id=ctx, kind="ok", task_id=task_id, state=state, final=final)

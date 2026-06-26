@@ -90,6 +90,18 @@ def run_chain(
                 error=out.error, elapsed_ms=elapsed,
             ))
             return result
+        if not out.final:
+            # A 'submitted'/'working' task has no FINAL reply to feed downstream —
+            # forwarding its (usually empty) text would corrupt the pipeline. A
+            # synchronous chain cannot wait; use submit/poll for async peers.
+            result.steps.append(ChainStep(
+                ref.name, False, sent=current, reply=out.reply, elapsed_ms=elapsed,
+                error=(
+                    f"non-terminal task (state='{out.state or 'unknown'}'); a chain needs a "
+                    "final reply to forward — use a2a_fleet_submit/poll for async peers"
+                ),
+            ))
+            return result
         result.steps.append(ChainStep(ref.name, True, sent=current, reply=out.reply, elapsed_ms=elapsed))
         current = out.reply   # output -> next agent's input
     if not result.steps:

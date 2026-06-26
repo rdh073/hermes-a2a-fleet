@@ -56,6 +56,30 @@ def test_chain_short_circuits_on_transport_failure():
     assert "http://h2:9900" not in client.calls          # downstream untouched
 
 
+def test_chain_breaks_on_non_terminal_task():
+    # an upstream agent that returns a still-'working' task has no FINAL output;
+    # the chain must NOT forward its empty reply and must stop before downstream.
+    class PendingMid(FakeClient):
+        def send_message(self, rpc_url, message, auth=None, timeout=30, context_id=""):
+            self.calls.append(rpc_url)
+            if "mid" in rpc_url:
+                return {"result": {"task": {"id": "X", "status": {"state": "working"}}}}
+            return super().send_message(rpc_url, message, auth=auth, timeout=timeout, context_id=context_id)
+
+    agents = [
+        AgentRef(name="a", url="http://a:9900"),
+        AgentRef(name="b", url="http://mid:9900"),
+        AgentRef(name="c", url="http://c:9900"),
+    ]
+    client = PendingMid()
+    res = run_chain(agents, "go", client)
+    assert not res.completed
+    assert [s.agent for s in res.steps] == ["a", "b"]      # stopped at the pending step
+    assert res.steps[-1].ok is False
+    assert "non-terminal" in res.steps[-1].error and "working" in res.steps[-1].error
+    assert "http://c:9900" not in client.calls             # downstream never contacted
+
+
 def test_chain_short_circuits_on_failed_task():
     class FailMid(FakeClient):
         def send_message(self, rpc_url, message, auth=None, timeout=30, context_id=""):
