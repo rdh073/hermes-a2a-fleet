@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # GitHub Actions version drift — most CVE-prone surface, zero cost.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # Python dev/runtime deps (pyproject).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

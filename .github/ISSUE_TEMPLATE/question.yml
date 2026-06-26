@@ -1,0 +1,27 @@
+name: Question
+description: How do I…? Why does…? Is X possible?
+title: "[question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Prefer [Discussions](https://github.com/rdh073/hermes-a2a-fleet/discussions)
+        for open-ended questions. Use this template only if Discussions isn't
+        a fit (e.g. you suspect a bug but aren't sure).
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and what have you already tried?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've already read / tried
+      description: README, docs page, search results that didn't answer it.
+    validations:
+      required: true

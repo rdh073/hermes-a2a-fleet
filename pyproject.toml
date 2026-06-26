@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-a2a-fleet"
+version = "0.1.0"
+description = "Multi-agent A2A discovery + parallel fan-out plugin for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "hermes-a2a-fleet contributors" }]
+keywords = ["hermes", "a2a", "agent2agent", "discovery", "mdns", "tailscale"]
+dependencies = []
+
+[project.optional-dependencies]
+# LAN discovery is opt-in; the plugin degrades to a no-op without it.
+mdns = ["zeroconf>=0.131"]
+dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/rdh073/hermes-a2a-fleet"
+Issues = "https://github.com/rdh073/hermes-a2a-fleet/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_a2a_fleet"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

@@ -1,0 +1,82 @@
+name: Bug report
+description: Something is broken or behaves wrong
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Read this first
+        - A bug report without a reproduction is not actionable. If you can't
+          reproduce it deterministically, say so explicitly.
+        - "It doesn't work" is not a bug report. Tell me what you ran, what
+          you expected, and what actually happened.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what did you get?
+      placeholder: |
+        I ran: `<command or code snippet>`
+        Expected: <expected outcome>
+        Got: <actual outcome / error>
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Smallest command + input that reproduces it. Link a sample file if relevant.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full output / stack trace
+      render: shell
+      description: Run with verbose/debug flag if available. Paste the entire output, not a screenshot.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "hermes-a2a-fleet version"
+      description: Release tag or commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 14.5 / Ubuntu 22.04 / Windows 11 WSL2"
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime version
+      description: e.g. Python 3.11.6, Node 20.10.0, Go 1.22.0 — whichever applies
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate
+          required: true
+        - label: I'm on the latest released version (or `main`)
+          required: true
+        - label: This reproduces deterministically (not "happens sometimes")
+          required: false

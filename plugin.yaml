@@ -1,0 +1,36 @@
+name: a2a-fleet
+label: A2A Fleet
+# Tools-only plugin (no platform adapter). Hermes recognises
+# {standalone, backend, exclusive, platform, model-provider}; 'standalone'
+# is the right kind for a plugin that only registers tools via register(ctx).
+kind: standalone
+version: 0.1.0
+description: >
+  Multi-agent A2A discovery + parallel fan-out for Hermes Agent. Discovers many
+  A2A peers (any A2A-compliant agent) over mDNS on the LAN and/or a
+  tailnet sweep, behind one swappable Registry, then broadcasts a single task to
+  all of them in parallel and aggregates the replies (scatter-gather).
+
+  Complements the upstream Hermes `a2a` plugin (single-peer discover/call) — this
+  one is the FLEET side: existence-discovery + parallel execution. Pure stdlib
+  transport (urllib + JSON-RPC message/send); the optional `mdns` source uses
+  `zeroconf` if installed and degrades to a no-op otherwise.
+
+  Tools (toolset `a2a_fleet`):
+    - a2a_fleet_discover  — refresh discovery, list reachable peers + capabilities
+    - a2a_fleet_list      — show the cached fleet (no network)
+    - a2a_fleet_broadcast — send one task to many peers in parallel, aggregate
+
+  Discovery advertises reachability only; each peer's own bearer gate still
+  decides access. Unreachable/offline peers are reported, never retried.
+author: hermes-a2a-fleet contributors
+requires_env: []
+optional_env:
+  - name: A2A_FLEET_SOURCES
+    description: "Comma-separated discovery sources to enable (default: static,tailnet). Options: static, mdns, tailnet."
+    prompt: "Enabled discovery sources (e.g. static,tailnet,mdns)"
+    password: false
+  - name: TAILSCALE_BIN
+    description: "Override path to the tailscale binary used by the tailnet source (default: discovered on PATH)."
+    prompt: "Path to tailscale binary (blank = auto-discover)"
+    password: false

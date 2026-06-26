@@ -1,0 +1,69 @@
+name: Feature request
+description: Propose a new feature or change in behavior
+title: "[feat]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Read this first
+        - Describe the **problem**, then the **proposal**. "Add X" without
+          a problem statement won't get traction.
+        - If you're willing to implement it, say so. Big features without
+          an implementer often stall.
+        - Discuss before coding. Don't open a 2000-line PR cold.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that's painful, impossible, or ugly today?
+      placeholder: |
+        Describe the current pain point. What's the user trying to do, and
+        what's standing in the way?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should the CLI / API look like? Concrete is better than abstract.
+      placeholder: |
+        Show the desired command, function signature, config schema, or UX.
+        Concrete examples beat hand-wavy descriptions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you try or think about? Why didn't it work?
+
+  - type: textarea
+    id: breakage
+    attributes:
+      label: Backwards compatibility
+      description: Does this change any existing CLI flag, output path, or API? If yes, propose a migration.
+
+  - type: dropdown
+    id: implementer
+    attributes:
+      label: Are you willing to implement this?
+      options:
+        - "Yes, I'll send a PR"
+        - "Yes, with guidance"
+        - "No, I'm requesting only"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and discussions for this
+          required: true
+        - label: This is a concrete proposal, not a vague wish
+          required: true

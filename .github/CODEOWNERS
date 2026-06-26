@@ -1,0 +1,9 @@
+# Default owner — gets review request on every PR
+*       @rdh073
+
+# Critical paths: require explicit owner review.
+/hermes_a2a_fleet/      @rdh073
+/tests/                 @rdh073
+/.github/               @rdh073
+SECURITY.md             @rdh073
+LICENSE                 @rdh073
