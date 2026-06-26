@@ -11,7 +11,13 @@ from __future__ import annotations
 import json
 import urllib.request
 import uuid
+from dataclasses import dataclass
 from typing import Any
+
+# A2A task lifecycle: 'completed' is the only successful terminal; the rest are
+# unsuccessful terminals. Anything else (submitted/working/'') is still running.
+TERMINAL_STATES = ("failed", "canceled", "cancelled", "rejected")
+DONE_STATES = ("completed", *TERMINAL_STATES)
 
 # Newer A2A spec uses agent-card.json; older Hermes builds serve agent.json.
 CARD_PATHS = ("/.well-known/agent-card.json", "/.well-known/agent.json")
@@ -128,6 +134,28 @@ class A2AClient:
         body = build_send_body(text, context_id)
         return self._post_json(rpc_url, body, self.auth_headers(auth), timeout or self.default_timeout)
 
+    def get_task(
+        self,
+        rpc_url: str,
+        task_id: str,
+        auth: dict | None = None,
+        timeout: int | None = None,
+    ) -> dict:
+        """Poll a task by id (JSON-RPC ``tasks/get``); return the raw response.
+
+        The async counterpart to ``send_message``: a peer that returns a
+        non-terminal Task (submitted/working) is polled here until it reaches a
+        terminal state. Must hit the SAME agent that created the task (its rpc
+        url + auth), which the submit step records.
+        """
+        body = {
+            "jsonrpc": "2.0",
+            "id": "get-" + uuid.uuid4().hex[:16],
+            "method": "tasks/get",
+            "params": {"id": task_id},
+        }
+        return self._post_json(rpc_url, body, self.auth_headers(auth), timeout or self.default_timeout)
+
     @staticmethod
     def unwrap_result(result: Any) -> Any:
         """Return the inner Task/Message from a JSON-RPC ``result``.
@@ -181,3 +209,49 @@ class A2AClient:
             if txt:
                 return txt
         return parts_text(obj)
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """The decoded meaning of one A2A response, independent of execution mode.
+
+    fan-out, chain, and async submit/poll all turn a raw ``message/send`` /
+    ``tasks/get`` response into this single shape, so 'ok', 'reply', the task
+    id, and the lifecycle state mean the same thing everywhere.
+    """
+
+    ok: bool
+    reply: str = ""
+    context_id: str = ""
+    error: str = ""
+    kind: str = "ok"        # ok | error | failed
+    task_id: str = ""
+    state: str = ""         # raw A2A task state (submitted/working/completed/...)
+
+
+def interpret_result(client, resp: Any) -> Outcome:
+    """Decode a raw JSON-RPC response into an :class:`Outcome`.
+
+    The ONE place that knows the wire variants — a JSON-RPC ``error``, a Task
+    wrapped as ``result.task``, a bare ``result.message``, or a top-level Task —
+    so every execution mode agrees on success/failure. A transport-level
+    exception is the caller's to catch; this only interprets a response that
+    came back.
+    """
+    if isinstance(resp, dict) and resp.get("error"):
+        err = resp["error"]
+        msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        return Outcome(False, error=f"peer error: {msg}", kind="error")
+    result = resp.get("result", {}) if isinstance(resp, dict) else {}
+    obj = client.unwrap_result(result)
+    reply = client.reply_text(result)
+    task_id = obj.get("id", "") if isinstance(obj, dict) else ""
+    state = (obj.get("status") or {}).get("state", "") if isinstance(obj, dict) else ""
+    ctx = obj.get("contextId", "") if isinstance(obj, dict) else ""
+    if state in TERMINAL_STATES:
+        detail = f": {reply}" if reply else ""
+        return Outcome(
+            False, reply=reply, context_id=ctx, error=f"task {state}{detail}",
+            kind="failed", task_id=task_id, state=state,
+        )
+    return Outcome(True, reply=reply, context_id=ctx, kind="ok", task_id=task_id, state=state)

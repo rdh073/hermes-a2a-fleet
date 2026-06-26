@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 
+from .client import interpret_result
 from .types import AgentRef, FanResult
 
 
@@ -25,9 +26,8 @@ def _clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(value, hi))
 
 
-def fan_out(
-    agents: Iterable[AgentRef],
-    message: str,
+def scatter(
+    items: Iterable[tuple[AgentRef, str]],
     client,
     *,
     max_workers: int = 10,
@@ -37,7 +37,12 @@ def fan_out(
     stop_on_first: bool = False,
     clock=time.monotonic,
 ) -> list[FanResult]:
-    """Send ``message`` to every agent concurrently; collect every outcome.
+    """Run a set of ``(agent, message)`` work items concurrently; one outcome each.
+
+    The core scatter-gather primitive. The unit of work is a (peer, message)
+    PAIR — so a *broadcast* (one shared message, see :func:`fan_out`) and a
+    *dispatch* (a different message per peer) are the same operation over a
+    different item list, not two code paths.
 
     Two liveness controls beyond the per-peer ``timeout``:
 
@@ -49,16 +54,16 @@ def fan_out(
       — a Python future already executing cannot be killed, so abandoned peers
       may still finish in the background; we simply stop waiting on them.
 
-    Invariants: ``len(result) == len(agents)`` (exactly-one-terminal accounting —
-    every peer appears once), and the call returns within roughly ``deadline``
+    Invariants: ``len(result) == len(items)`` (exactly-one-terminal accounting —
+    every item appears once), and the call returns within roughly ``deadline``
     when one is set. Results are sorted by agent name for deterministic output.
     """
-    agents = list(agents)
-    if not agents:
+    items = list(items)
+    if not items:
         return []
-    workers = _clamp(max_workers, 1, len(agents))
+    workers = _clamp(max_workers, 1, len(items))
 
-    def call(ref: AgentRef) -> FanResult:
+    def call(ref: AgentRef, message: str) -> FanResult:
         start = clock()
         try:
             resp = client.send_message(
@@ -69,32 +74,20 @@ def fan_out(
                 context_id=context_id,
             )
             elapsed = int((clock() - start) * 1000)
-            if isinstance(resp, dict) and resp.get("error"):
-                err = resp["error"]
-                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-                return FanResult(ref.name, False, error=f"peer error: {msg}", elapsed_ms=elapsed, terminal="error")
-            result = resp.get("result", {}) if isinstance(resp, dict) else {}
-            obj = client.unwrap_result(result)
-            reply = client.reply_text(result)
-            state = (obj.get("status") or {}).get("state", "") if isinstance(obj, dict) else ""
-            ctx = obj.get("contextId", context_id) if isinstance(obj, dict) else context_id
-            # A successful RPC can still carry a FAILED task — that is not 'ok'.
-            if state in ("failed", "canceled", "cancelled", "rejected"):
-                detail = f": {reply}" if reply else ""
-                return FanResult(
-                    ref.name, False, error=f"task {state}{detail}",
-                    elapsed_ms=elapsed, context_id=ctx or "", terminal="failed",
-                )
+            out = interpret_result(client, resp)
+            ctx = out.context_id or context_id
+            # A successful RPC can still carry a FAILED task — interpret_result
+            # marks that ok=False / kind='failed', so it is not reported as 'ok'.
             return FanResult(
-                ref.name, True, reply=reply,
-                elapsed_ms=elapsed, context_id=ctx or "", terminal="ok",
+                ref.name, out.ok, reply=out.reply, error=out.error,
+                elapsed_ms=elapsed, context_id=ctx or "", terminal=out.kind,
             )
         except Exception as e:  # transform per-peer failure into a result, never abort the batch
             return FanResult(ref.name, False, error=str(e), elapsed_ms=int((clock() - start) * 1000), terminal="error")
 
     results: list[FanResult] = []
     ex = ThreadPoolExecutor(max_workers=workers)
-    pending = {ex.submit(call, a): a for a in agents}
+    pending = {ex.submit(call, ref, msg): ref for ref, msg in items}
     timed_out = False
     try:
         try:
@@ -118,6 +111,35 @@ def fan_out(
         ex.shutdown(wait=False, cancel_futures=True)
     results.sort(key=lambda r: r.agent)
     return results
+
+
+def fan_out(
+    agents: Iterable[AgentRef],
+    message: str,
+    client,
+    *,
+    max_workers: int = 10,
+    timeout: int = 30,
+    context_id: str = "",
+    deadline: float | None = None,
+    stop_on_first: bool = False,
+    clock=time.monotonic,
+) -> list[FanResult]:
+    """Broadcast: send the SAME ``message`` to every agent concurrently.
+
+    A thin specialisation of :func:`scatter` where every work item shares one
+    message. Kept as the named entry point for the common case (broadcast).
+    """
+    return scatter(
+        [(a, message) for a in agents],
+        client,
+        max_workers=max_workers,
+        timeout=timeout,
+        context_id=context_id,
+        deadline=deadline,
+        stop_on_first=stop_on_first,
+        clock=clock,
+    )
 
 
 def partition(results: Iterable[FanResult]) -> tuple[list[FanResult], list[FanResult]]:
