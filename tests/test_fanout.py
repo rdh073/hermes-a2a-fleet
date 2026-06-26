@@ -6,8 +6,42 @@ from _helpers import FakeClient, agentref_lists
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hermes_a2a_fleet.fanout import fan_out, partition, summarize
+from hermes_a2a_fleet.fanout import fan_out, partition, scatter, summarize
 from hermes_a2a_fleet.types import AgentRef, FanResult
+
+# --- scatter: each peer can get its OWN message, run in parallel -------------
+
+def test_scatter_sends_a_distinct_message_per_agent():
+    class EchoArgClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.seen: dict[str, str] = {}
+
+        def send_message(self, rpc_url, message, auth=None, timeout=30, context_id=""):
+            self.seen[rpc_url] = message
+            return super().send_message(rpc_url, message, auth=auth, timeout=timeout, context_id=context_id)
+
+    a = AgentRef(name="a", url="http://a:9900")
+    b = AgentRef(name="b", url="http://b:9900")
+    client = EchoArgClient()
+    results = scatter([(a, "task-A"), (b, "task-B")], client)
+
+    assert len(results) == 2
+    by = {r.agent: r for r in results}
+    assert by["a"].reply == "reply:task-A" and by["b"].reply == "reply:task-B"
+    assert client.seen == {"http://a:9900": "task-A", "http://b:9900": "task-B"}
+
+
+def test_fan_out_is_scatter_with_one_shared_message():
+    # metamorphic: broadcast == scatter where every item shares the message
+    agents = [AgentRef(name="a", url="http://a:9900"), AgentRef(name="b", url="http://b:9900")]
+    f = fan_out(agents, "same", FakeClient())
+    s = scatter([(x, "same") for x in agents], FakeClient())
+    assert {(r.agent, r.reply, r.terminal) for r in f} == {(r.agent, r.reply, r.terminal) for r in s}
+
+
+def test_scatter_empty_is_empty():
+    assert scatter([], FakeClient()) == []
 
 # --- count conservation + ok/err partition (the core scatter-gather law) ----
 
