@@ -11,7 +11,12 @@ at a time (`a2a_discover(url)`, `a2a_call(agent, msg)`). This plugin is the
   listener that reflects agents joining and leaving in real time) and/or a
   tailnet sweep across networks.
 - **Parallel execution** — broadcast one task to all of them at once
-  (scatter-gather) and aggregate the replies.
+  (scatter-gather), or `dispatch` a *different* task to each peer in parallel,
+  and aggregate the replies.
+- **Sequential pipelines** — `chain` a task through peers in order (each
+  agent's reply feeds the next); a broken link short-circuits and reports.
+- **Async / fire-and-forget** — `submit` a task and get a `task_id`, then
+  `poll` it to completion (A2A `tasks/get`).
 
 It is **standalone** (no dependency on the upstream `a2a` plugin) and makes
 **zero core edits** — it registers tools through the public `ctx` surface, the
@@ -43,7 +48,11 @@ running A2A is dropped automatically.
 |---|---|
 | `a2a_fleet_discover` | Refresh discovery; list reachable peers + capabilities |
 | `a2a_fleet_list` | Show the cached fleet (no network) |
-| `a2a_fleet_broadcast` | Send one task to many peers **in parallel**, aggregate (`mode=collect\|first`, optional `capability` / `agents` filter) |
+| `a2a_fleet_broadcast` | Send **one** task to many peers **in parallel**, aggregate (`mode=collect\|first`, optional `capability` / `agents` filter) |
+| `a2a_fleet_dispatch` | Send a **different** task to each peer **in parallel** (`tasks=[{agent, message}, …]`), aggregate |
+| `a2a_fleet_chain` | Pipe one task through peers **in order** (`agents=[a, b, c]`); each reply feeds the next, a failed step breaks the chain |
+| `a2a_fleet_submit` | Fire one task at a peer **without waiting**; returns a `task_id` |
+| `a2a_fleet_poll` | Poll a submitted `task_id` for its state + result (A2A `tasks/get`) |
 
 ## Install
 
@@ -120,6 +129,19 @@ no edits to the orchestrator.
 
 ## Design notes
 
+- **One scatter primitive.** Broadcast and dispatch are the same operation over
+  a different work-list — the unit is a `(peer, message)` pair, so broadcast is
+  "all pairs share the message" and dispatch is "a message per pair". No second
+  code path.
+- **Chain vs fan-out failure semantics are opposites — on purpose.** A parallel
+  peer failing is *independent* (partial results); a pipeline step failing is
+  *fatal* to everything after it (no output to feed forward), so `chain`
+  short-circuits and reports how far it got.
+- **One response decoder.** Fan-out, chain, and submit/poll all route a raw
+  `message/send` / `tasks/get` response through `interpret_result`, so "ok",
+  "reply", the task id, and the lifecycle state mean the same thing everywhere.
+- **Async tracker is in-memory + per-session.** `submit` remembers which peer a
+  `task_id` went to so `poll` hits the same agent; it is not a durable queue.
 - **Partial failure, never retry a dead peer.** The fan-out makes one attempt
   per peer with a hard timeout; offline peers are *reported*, not retried (an
   unreachable node is non-transient).

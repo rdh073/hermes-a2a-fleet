@@ -127,3 +127,48 @@ def test_broadcast_first_mode_enables_stop_on_first(monkeypatch):
         T._registry = T._transport = T._config = None
 
     assert captured["stop_on_first"] is True
+
+
+# --- dispatch: a different message per peer, in parallel --------------------
+
+def test_dispatch_sends_each_peer_its_own_message():
+    agents = [AgentRef(name=f"p{i}", url=f"http://h{i}:9900") for i in range(3)]
+
+    class S:
+        name = "s"
+
+        def discover(self):
+            return agents
+
+    client = FakeClient(cards={f"http://h{i}:9900": {"name": f"p{i}"} for i in range(3)})
+    reg = Registry([S()], client, ttl=0)
+    T.set_components(reg, transport=client, config=load_fleet_config(raw={}))
+    try:
+        out = T.a2a_fleet_dispatch({"tasks": [
+            {"agent": "p0", "message": "alpha"},
+            {"agent": "p2", "message": "gamma"},
+        ]})
+    finally:
+        T._registry = T._transport = T._config = None
+
+    assert "2/2 succeeded" in out
+    assert "reply:alpha" in out and "reply:gamma" in out  # each got ITS message
+    assert "p1" not in out                                 # only the addressed peers
+
+
+def test_dispatch_rejects_unknown_agent_and_bad_shape():
+    class S:
+        name = "s"
+
+        def discover(self):
+            return [AgentRef(name="p0", url="http://h0:9900")]
+
+    client = FakeClient(cards={"http://h0:9900": {"name": "p0"}})
+    reg = Registry([S()], client, ttl=0)
+    T.set_components(reg, transport=client, config=load_fleet_config(raw={}))
+    try:
+        assert "non-empty list" in T.a2a_fleet_dispatch({"tasks": []})
+        assert "unknown agent" in T.a2a_fleet_dispatch({"tasks": [{"agent": "ghost", "message": "x"}]}).lower()
+        assert "needs both" in T.a2a_fleet_dispatch({"tasks": [{"agent": "p0"}]})
+    finally:
+        T._registry = T._transport = T._config = None
