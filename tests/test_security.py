@@ -15,7 +15,7 @@ from _helpers import FakeClient
 
 from hermes_a2a_fleet.auth import build_auth_resolver
 from hermes_a2a_fleet.client import MAX_RESPONSE_BYTES, _read_capped
-from hermes_a2a_fleet.registry import Registry, _same_origin
+from hermes_a2a_fleet.registry import Registry, _reorigin, _same_origin
 from hermes_a2a_fleet.types import AgentRef
 
 # --- cross-origin agent-card url must NOT redirect calls / bearer auth -------
@@ -37,7 +37,9 @@ def test_registry_ignores_cross_origin_card_url():
             return {"name": "X", "url": "http://evil.example:9000/a2a"}  # foreign host
 
     out = Registry([_source("p", "http://good:9000", "mdns")], XClient(), ttl=0).refresh()
-    assert out[0].rpc_url == "http://good:9000"  # foreign card url ignored -> stays same-host
+    # foreign HOST is dropped (no SSRF/token leak), but the card's /a2a PATH is
+    # kept on the host we actually reached.
+    assert out[0].rpc_url == "http://good:9000/a2a"
 
 
 def test_registry_uses_same_origin_card_url():
@@ -141,13 +143,24 @@ def test_same_origin_strict_and_exception_safe():
     assert _same_origin("http://h:notaport/a2a", "http://h:9000") is False
 
 
+def test_reorigin_keeps_path_on_reached_host():
+    # a multi-homed agent advertised its LAN url; we reached it over the tailnet.
+    # Keep /a2a, but on the host we reached (NOT the advertised foreign host).
+    assert _reorigin("http://192.168.1.5:9000/a2a", "http://100.64.0.4:9000") == "http://100.64.0.4:9000/a2a"
+    # card url with no path -> fall back to the base unchanged
+    assert _reorigin("http://192.168.1.5:9000", "http://100.64.0.4:9000") == "http://100.64.0.4:9000"
+    # non-path junk -> no path spliced
+    assert _reorigin("garbage", "http://100.64.0.4:9000") == "http://100.64.0.4:9000"
+
+
 def test_registry_survives_malformed_card_url():
     class BadClient(FakeClient):
         def fetch_card(self, base_url, auth=None, timeout=8):
             return {"name": "X", "url": "http://h:999999/a2a"}  # out-of-range port
 
     out = Registry([_source("p", "http://good:9000", "mdns")], BadClient(), ttl=0).refresh()
-    assert out[0].rpc_url == "http://good:9000"  # malformed card url ignored, refresh did not crash
+    # malformed card url -> treated cross-origin; path kept, host stays good; no crash
+    assert out[0].rpc_url == "http://good:9000/a2a"
 
 
 def test_resolver_not_applied_to_static_a2a_source():

@@ -45,6 +45,23 @@ def _same_origin(a: str, b: str) -> bool:
         return False
 
 
+def _reorigin(foreign_url: str, base_url: str) -> str:
+    """Keep the RPC PATH a (cross-origin) card advertises, but on the origin we
+    actually reached. A multi-homed agent may advertise a card url on a
+    different address than the one we discovered it at (e.g. its LAN IP while we
+    reached it over a tailnet); we must not follow that to a foreign host, but
+    dropping the path entirely would break the call. Splicing the card's path
+    onto the reached origin is safe — same host we already trust — and keeps the
+    ``/a2a`` endpoint. Falls back to ``base_url`` if the card has no usable path.
+    """
+    try:
+        fu, bu = urlparse(foreign_url), urlparse(base_url)
+        path = fu.path if fu.path.startswith("/") else ""
+        return f"{bu.scheme}://{bu.netloc}{path}" if path else base_url
+    except ValueError:
+        return base_url
+
+
 def dedupe_by_url(refs: Iterable[AgentRef]) -> list[AgentRef]:
     """Collapse refs sharing a base URL, keeping the first seen.
 
@@ -138,7 +155,12 @@ class Registry:
         # reached — a cross-origin url from an untrusted card would redirect
         # calls (SSRF) and send the bearer token to a different host.
         card_url = card.get("url")
-        rpc = card_url if (isinstance(card_url, str) and card_url and _same_origin(card_url, ref.url)) else ref.url
+        if isinstance(card_url, str) and card_url:
+            # Same-origin: trust the card url as-is. Cross-origin: keep the card's
+            # path but on the host WE reached (never follow it to a foreign host).
+            rpc = card_url if _same_origin(card_url, ref.url) else _reorigin(card_url, ref.url)
+        else:
+            rpc = ref.url
         return AgentRef(
             name=card.get("name") or ref.name,
             url=ref.url,
