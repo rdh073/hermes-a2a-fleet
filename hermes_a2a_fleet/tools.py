@@ -30,11 +30,14 @@ _registry: Registry | None = None
 _transport: A2AClient | None = None
 _config: FleetConfig | None = None
 
-# Async submit/poll tracker: task_id -> {rpc_url, auth, agent}. A submitted task
-# must be polled against the SAME peer that created it, so we remember where it
-# went. In-memory and per-process on purpose — a submit and its polls live in
-# one session; it is not a durable queue. Bounded so a never-polled flood cannot
-# grow without limit (oldest is evicted, insertion-ordered).
+# Async submit/poll tracker: handle -> {rpc_url, auth, agent, task_id}. A
+# submitted task must be polled against the SAME peer that created it, so we
+# remember where it went. The handle is namespaced per peer ("agent#task_id")
+# because an A2A task id is unique only PER AGENT — two peers can both return
+# "T-1", and a bare-task_id key would let the later submit overwrite the
+# earlier's routing. In-memory and SAME-PROCESS on purpose — a submit and its
+# polls live in one running session; it is not a durable or cross-process queue.
+# Bounded so a never-polled flood cannot grow without limit (oldest evicted).
 _tasks: dict[str, dict] = {}
 _tasks_lock = threading.Lock()
 _MAX_TRACKED_TASKS = 256
@@ -238,47 +241,49 @@ def a2a_fleet_submit(args: dict, **_: Any) -> str:
     if out.state in TERMINAL_STATES:
         return f"[{agent}] task {out.task_id} ended '{out.state}': {out.error}"
 
+    handle = f"{agent}#{out.task_id}"  # per-peer namespace; remote ids aren't globally unique
     with _tasks_lock:
         if len(_tasks) >= _MAX_TRACKED_TASKS:
             _tasks.pop(next(iter(_tasks)))  # evict oldest; bounds an unpolled flood
-        _tasks[out.task_id] = {"rpc_url": rpc_url, "auth": ref.auth, "agent": agent}
+        _tasks[handle] = {"rpc_url": rpc_url, "auth": ref.auth, "agent": agent, "task_id": out.task_id}
     return (
-        f"Submitted to {agent}. task_id={out.task_id} state={out.state or 'submitted'}.\n"
+        f"Submitted to {agent}. task_id={handle} state={out.state or 'submitted'}.\n"
         "Poll with a2a_fleet_poll(task_id) to retrieve the result."
     )
 
 
 def a2a_fleet_poll(args: dict, **_: Any) -> str:
-    task_id = str(args.get("task_id") or args.get("id") or "").strip()
-    if not task_id:
+    handle = str(args.get("task_id") or args.get("id") or "").strip()
+    if not handle:
         return "Error: 'task_id' (returned by a2a_fleet_submit) is required."
 
     with _tasks_lock:
-        entry = _tasks.get(task_id)
+        entry = _tasks.get(handle)
     if entry is None:
         return (
-            f"Error: unknown task_id '{task_id}'. Submit it this session — the "
+            f"Error: unknown task_id '{handle}'. Submit it in THIS process — the "
             "tracker is in-memory and does not survive a restart."
         )
 
+    remote_id = entry["task_id"]  # the peer's own id; the handle is our namespaced key
     _, transport, cfg = _components()
     try:
         resp = transport.get_task(
-            entry["rpc_url"], task_id, auth=entry["auth"],
+            entry["rpc_url"], remote_id, auth=entry["auth"],
             timeout=int(args.get("timeout") or cfg.timeout),
         )
     except Exception as e:
-        return f"Error: poll '{task_id}' failed — {e}"
+        return f"Error: poll '{handle}' failed — {e}"
 
     out = interpret_result(transport, resp)
     if out.kind == "error":
-        return f"[{entry['agent']} · task {task_id}] poll error: {out.error}"
+        return f"[{entry['agent']} · task {remote_id}] poll error: {out.error}"
 
     state = out.state or "unknown"
     if out.state == "completed" or out.state in TERMINAL_STATES:
         with _tasks_lock:
-            _tasks.pop(task_id, None)  # terminal — stop tracking
-    head = f"[{entry['agent']} · task {task_id} · {state}]"
+            _tasks.pop(handle, None)  # terminal — stop tracking
+    head = f"[{entry['agent']} · task {remote_id} · {state}]"
     if out.state in TERMINAL_STATES:
         return f"{head}\n{out.error}"
     return f"{head}\n{out.reply or '(working — no output yet)'}"

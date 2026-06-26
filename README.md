@@ -140,8 +140,11 @@ no edits to the orchestrator.
 - **One response decoder.** Fan-out, chain, and submit/poll all route a raw
   `message/send` / `tasks/get` response through `interpret_result`, so "ok",
   "reply", the task id, and the lifecycle state mean the same thing everywhere.
-- **Async tracker is in-memory + per-session.** `submit` remembers which peer a
-  `task_id` went to so `poll` hits the same agent; it is not a durable queue.
+- **Async tracker is in-memory + same-process.** `submit` returns a per-peer
+  handle (`agent#task_id`) and remembers which peer it went to so `poll` hits the
+  same agent with the peer's own id. Task ids are unique only per agent, so the
+  handle is namespaced to avoid cross-peer collisions. It is not a durable or
+  cross-process queue — submit and poll within one running session.
 - **Partial failure, never retry a dead peer.** The fan-out makes one attempt
   per peer with a hard timeout; offline peers are *reported*, not retried (an
   unreachable node is non-transient).

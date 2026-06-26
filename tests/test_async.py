@@ -70,18 +70,47 @@ def test_submit_tracks_task_then_poll_resolves_to_completion():
     _wire(client, [ref])
 
     out = T.a2a_fleet_submit({"agent": "worker", "message": "do it"})
-    assert "T-1" in out and "submitted" in out.lower()
-    assert "T-1" in T._tasks                       # tracked for polling
+    assert "worker#T-1" in out and "submitted" in out.lower()  # per-peer namespaced handle
+    assert "worker#T-1" in T._tasks                # tracked for polling
     assert client.calls == ["http://w:9900/a2a"]   # used the verified rpc_url, not bare url
 
-    first = T.a2a_fleet_poll({"task_id": "T-1"})
+    first = T.a2a_fleet_poll({"task_id": "worker#T-1"})
     assert "working" in first.lower()
-    assert "T-1" in T._tasks                        # non-terminal -> still tracked
+    assert "worker#T-1" in T._tasks                  # non-terminal -> still tracked
 
-    second = T.a2a_fleet_poll({"task_id": "T-1"})
+    second = T.a2a_fleet_poll({"task_id": "worker#T-1"})
     assert "completed" in second.lower() and "done!" in second
-    assert "T-1" not in T._tasks                     # terminal -> evicted
-    assert client.polls[0] == ("http://w:9900/a2a", "T-1")  # polled the SAME peer
+    assert "worker#T-1" not in T._tasks              # terminal -> evicted
+    assert client.polls[0] == ("http://w:9900/a2a", "T-1")  # polled SAME peer with the REMOTE id
+
+
+def test_two_peers_returning_the_same_task_id_do_not_collide():
+    # A2A task ids are unique only per-agent; two peers can both return "T-1".
+    # Namespacing by peer must keep both routes distinct (no overwrite).
+    class RouteClient(FakeClient):
+        def send_message(self, rpc_url, message, auth=None, timeout=30, context_id=""):
+            self.calls.append(rpc_url)
+            return {"result": {"task": {"id": "T-1", "status": {"state": "submitted"}}}}
+
+        def get_task(self, rpc_url, task_id, auth=None, timeout=None):
+            return {"result": {"task": {
+                "id": task_id, "status": {"state": "completed"},
+                "artifacts": [{"parts": [{"kind": "text", "text": f"from:{rpc_url}"}]}],
+            }}}
+
+    alpha = AgentRef(name="alpha", url="http://alpha:9900")
+    beta = AgentRef(name="beta", url="http://beta:9900")
+    _wire(RouteClient(), [alpha, beta])
+
+    a_out = T.a2a_fleet_submit({"agent": "alpha", "message": "x"})
+    b_out = T.a2a_fleet_submit({"agent": "beta", "message": "y"})
+    assert "alpha#T-1" in a_out and "beta#T-1" in b_out
+    assert {"alpha#T-1", "beta#T-1"} <= set(T._tasks)  # both tracked, neither overwritten
+
+    a_poll = T.a2a_fleet_poll({"task_id": "alpha#T-1"})
+    b_poll = T.a2a_fleet_poll({"task_id": "beta#T-1"})
+    assert "from:http://alpha:9900" in a_poll  # each handle routed to ITS peer
+    assert "from:http://beta:9900" in b_poll
 
 
 def test_submit_unknown_agent_is_an_error():
